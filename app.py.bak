@@ -1,0 +1,318 @@
+import streamlit as st
+import os
+from datetime import datetime
+import json
+from services.content_generator import FinancialContentGenerator
+from services.ppt_generator import ppt_generator
+from services.security_manager import security_manager
+from config.settings import SETTINGS
+
+# Page configuration
+st.set_page_config(
+    page_title="FinancePPT AI",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for professional styling
+st.markdown("""
+<style>
+    .main-header {
+        background: linear-gradient(90deg, #1e3a8a 0%, #3b82f6 100%);
+        padding: 2rem;
+        border-radius: 10px;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .main-header h1 {
+        color: white;
+        font-size: 2.5rem;
+        margin-bottom: 0.5rem;
+    }
+    .main-header p {
+        color: #e2e8f0;
+        font-size: 1.2rem;
+    }
+    .template-card {
+        border: 2px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+        transition: all 0.3s ease;
+    }
+    .template-card:hover {
+        border-color: #3b82f6;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+    }
+    .template-card.selected {
+        border-color: #10b981;
+        background-color: #f0fdf4;
+    }
+    .success-box {
+        background-color: #f0fdf4;
+        border: 1px solid #10b981;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+    .warning-box {
+        background-color: #fef3c7;
+        border: 1px solid #f59e0b;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+def main():
+    # Header
+    st.markdown("""
+    <div class="main-header">
+        <h1>📊 FinancePPT AI</h1>
+        <p>Create Professional Finance Presentations with AI-Powered Content Generation</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Check environment setup
+    if not security_manager.validate_environment():
+        st.error("⚠️ Environment setup incomplete. Please check your .env file configuration.")
+        st.info("Required environment variables: OPENAI_API_KEY, GOOGLE_API_KEY, or ANTHROPIC_API_KEY")
+        return
+    
+    # Sidebar configuration
+    with st.sidebar:
+        st.header("🎯 Presentation Configuration")
+        
+        # Topic input
+        topic = st.text_area(
+            "Presentation Topic",
+            placeholder="e.g., Q4 Financial Analysis, Investment Strategy, Budget Planning",
+            help="Describe the main topic or focus of your presentation"
+        )
+        
+        # Number of slides
+        slide_count = st.slider(
+            "Number of Slides",
+            min_value=5,
+            max_value=20,
+            value=10,
+            help="Choose the number of slides for your presentation"
+        )
+        
+        # Presentation type
+        presentation_type = st.selectbox(
+            "Presentation Type",
+            ["quarterly_analysis", "investment_proposal", "budget_planning"],
+            format_func=lambda x: x.replace("_", " ").title(),
+            help="Select the type of financial presentation"
+        )
+        
+        # Target audience
+        target_audience = st.selectbox(
+            "Target Audience",
+            ["Executive Leadership", "Board of Directors", "Investors", "Management Team", "Stakeholders"],
+            help="Choose your primary audience"
+        )
+        
+        st.divider()
+        
+        # AI Configuration
+        st.header("🤖 AI Configuration")
+        
+        ai_provider = st.selectbox(
+            "AI Provider",
+            ["OpenAI", "Google Gemini", "Anthropic"],
+            help="Choose your preferred AI provider"
+        )
+        
+        include_real_data = st.checkbox(
+            "Include Real Market Data",
+            value=True,
+            help="Fetch real-time market data to enhance your presentation"
+        )
+    
+    # Main content area
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.header("🎨 Choose Your Template")
+        
+        templates = {
+            "Corporate Blue": {
+                "description": "Professional corporate template with blue theme",
+                "color": "#1e3a8a",
+                "best_for": "Executive presentations and board meetings"
+            },
+            "Financial Green": {
+                "description": "Finance-focused template with green accents",
+                "color": "#10b981",
+                "best_for": "Investment proposals and financial analysis"
+            },
+            "Modern Orange": {
+                "description": "Modern and energetic orange-themed template",
+                "color": "#f59e0b",
+                "best_for": "Innovation presentations and creative projects"
+            }
+        }
+        
+        selected_template = None
+        
+        # Template selection
+        for template_name, template_info in templates.items():
+            col_template, col_info = st.columns([1, 3])
+            
+            with col_template:
+                if st.button(f"Select", key=f"select_{template_name}"):
+                    st.session_state.selected_template = template_name
+            
+            with col_info:
+                is_selected = st.session_state.get('selected_template') == template_name
+                card_class = "template-card selected" if is_selected else "template-card"
+                
+                st.markdown(f"""
+                <div class="{card_class}">
+                    <h4 style="color: {template_info['color']}; margin-bottom: 0.5rem;">{template_name}</h4>
+                    <p style="margin-bottom: 0.5rem;">{template_info['description']}</p>
+                    <small style="color: #6b7280;">Best for: {template_info['best_for']}</small>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Generation button
+        if st.button("🚀 Generate Presentation", type="primary", use_container_width=True):
+            if not topic:
+                st.error("Please enter a presentation topic")
+            elif not st.session_state.get('selected_template'):
+                st.error("Please select a template")
+            else:
+                generate_presentation(
+                    topic, presentation_type, target_audience, 
+                    slide_count, st.session_state.selected_template,
+                    ai_provider, include_real_data
+                )
+    
+    with col2:
+        st.header("📋 Presentation Preview")
+        
+        if st.session_state.get('selected_template'):
+            template_info = templates[st.session_state.selected_template]
+            
+            st.markdown(f"""
+            <div class="success-box">
+                <h4>Selected Template</h4>
+                <p><strong>{st.session_state.selected_template}</strong></p>
+                <p>{template_info['description']}</p>
+                <p><small>Best for: {template_info['best_for']}</small></p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Configuration summary
+        if topic:
+            st.markdown(f"""
+            <div class="template-card">
+                <h4>Configuration Summary</h4>
+                <p><strong>Topic:</strong> {topic[:50]}{'...' if len(topic) > 50 else ''}</p>
+                <p><strong>Slides:</strong> {slide_count}</p>
+                <p><strong>Type:</strong> {presentation_type.replace('_', ' ').title()}</p>
+                <p><strong>Audience:</strong> {target_audience}</p>
+                <p><strong>AI Provider:</strong> {ai_provider}</p>
+                <p><strong>Real Data:</strong> {'Yes' if include_real_data else 'No'}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+def generate_presentation(topic, presentation_type, target_audience, slide_count, template, ai_provider, include_real_data):
+    """Generate the complete presentation"""
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    try:
+        # Step 1: Generate content
+        status_text.text("🧠 Generating AI-powered content...")
+        progress_bar.progress(20)
+        
+        # ✅ Create an instance before calling the method
+        content_generator = FinancialContentGenerator()
+        content = content_generator.generate_presentation_content(
+            topic=topic,
+            presentation_type=presentation_type,
+            target_audience=target_audience,
+            slide_count=slide_count,
+            include_real_data=include_real_data,
+            ai_provider=ai_provider  # Pass the selected provider
+        )
+        
+        if not content:
+            st.error("Failed to generate presentation content. Please try again.")
+            return
+        
+        # Step 2: Create PowerPoint
+        status_text.text("📊 Creating professional PowerPoint...")
+        progress_bar.progress(60)
+        
+        template_key = template.lower().replace(" ", "_")
+        ppt_bytes = ppt_generator.create_presentation(
+            content=content,
+            template=template_key,
+            include_charts=True
+        )
+        
+        if not ppt_bytes:
+            st.error("Failed to create PowerPoint file. Please try again.")
+            return
+        
+        filename = f"{topic.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pptx"
+        ppt_file = ppt_generator.save_presentation(ppt_bytes, filename)
+        
+        # Step 3: Complete
+        status_text.text("✅ Presentation ready!")
+        progress_bar.progress(100)
+        
+        # Success message and download
+        st.success("🎉 Your professional finance presentation is ready!")
+        
+        # Display content preview
+        with st.expander("📖 Content Preview", expanded=True):
+            st.subheader(content.get('presentation_title', 'Financial Presentation'))
+            st.write(content.get('executive_summary', ''))
+            
+            st.subheader("Slide Structure:")
+            for slide in content.get('slides', [])[:5]:  # Show first 5 slides
+                st.write(f"**{slide.get('slide_number', '')}. {slide.get('title', '')}**")
+                for point in slide.get('content', []):
+                    st.write(f"• {point}")
+                st.write("")
+        
+        # Download button
+        if os.path.exists(ppt_file):
+            with open(ppt_file, "rb") as file:
+                st.download_button(
+                    label="📥 Download PowerPoint",
+                    data=file.read(),
+                    file_name=os.path.basename(ppt_file),
+                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    type="primary",
+                    use_container_width=True
+                )
+        
+        # Recommendations
+        if content.get('key_recommendations'):
+            st.subheader("🎯 Key Recommendations")
+            for rec in content['key_recommendations']:
+                st.write(f"• {rec}")
+        
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
+        st.info("Please check your API keys and try again.")
+    
+    finally:
+        progress_bar.empty()
+        status_text.empty()
+
+if __name__ == "__main__":
+    # Initialize session state
+    if 'selected_template' not in st.session_state:
+        st.session_state.selected_template = None
+    
+    main()
